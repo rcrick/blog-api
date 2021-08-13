@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/rcrick/blog-api/models"
+	"github.com/rcrick/blog-api/pkg/gredis"
+	"github.com/rcrick/blog-api/pkg/logging"
 	"github.com/rcrick/blog-api/routers"
 	"log"
 	"net/http"
@@ -14,13 +17,18 @@ import (
 )
 
 func main() {
+	setting.SetUp()
+	models.SetUp()
+	logging.SetUp()
+	gredis.SetUp()
+
 	router := routers.InitRouter()
 
 	s := http.Server{
-		Addr:           fmt.Sprintf(":%d", setting.HTTPPort),
+		Addr:           fmt.Sprintf(":%d", setting.ServerSetting.HttpPort),
 		Handler:        router,
-		ReadTimeout:    setting.ReadTimeout,
-		WriteTimeout:   setting.WriteTimeout,
+		ReadTimeout:    setting.ServerSetting.ReadTimeout,
+		WriteTimeout:   setting.ServerSetting.WriteTimeout,
 		MaxHeaderBytes: 1 << 20,
 	}
 

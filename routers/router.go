@@ -2,10 +2,12 @@ package routers
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/rcrick/blog-api/middleware/jwt"
 	"github.com/rcrick/blog-api/pkg/setting"
+	"github.com/rcrick/blog-api/pkg/upload"
+	"github.com/rcrick/blog-api/routers/api"
 	"github.com/swaggo/files"
 	"github.com/swaggo/gin-swagger"
+	"net/http"
 
 	_ "github.com/rcrick/blog-api/docs"
 	v1 "github.com/rcrick/blog-api/routers/api/v1"
@@ -27,13 +29,15 @@ func InitRouter() *gin.Engine {
 
 	r.Use(gin.Recovery())
 
-	gin.SetMode(setting.RunMode)
+	gin.SetMode(setting.ServerSetting.RunMode)
 
-	r.GET("/auth", v1.GetAuth)
+	r.GET("/auth", api.GetAuth)
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	r.POST("/upload", api.UploadImage)
+	r.StaticFS("/upload/images", http.Dir(upload.GetImageFullPath()))
 
 	api := r.Group("/api/v1")
-	api.Use(jwt.JWT())
+	//api.Use(jwt.JWT())
 	{
 		api.GET("/tags", v1.GetTags)
 		api.POST("/tags", v1.AddTag)

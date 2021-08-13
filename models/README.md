@@ -37,7 +37,7 @@ CREATE TABLE `blog_article` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='文章管理';
 ```
 
-## authentication tanle
+## authentication table
 ```bigquery
 CREATE TABLE `blog_auth` (
   `id` int(10) unsigned NOT NULL AUTO_INCREMENT,

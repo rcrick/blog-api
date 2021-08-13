@@ -1,14 +1,13 @@
 package v1
 
 import (
-	"fmt"
 	"github.com/astaxie/beego/validation"
 	"github.com/gin-gonic/gin"
-	"github.com/rcrick/blog-api/models"
+	"github.com/rcrick/blog-api/pkg/app"
 	"github.com/rcrick/blog-api/pkg/e"
-	"github.com/rcrick/blog-api/pkg/logging"
 	"github.com/rcrick/blog-api/pkg/setting"
 	"github.com/rcrick/blog-api/pkg/util"
+	"github.com/rcrick/blog-api/service/tag_service"
 	"github.com/unknwon/com"
 	"net/http"
 )
@@ -21,29 +20,41 @@ import (
 // @Success 200 {string} json "{"code":200,"data":{},"msg":"ok"}"
 // @Router /api/v1/tags [get]
 func GetTags(c *gin.Context) {
+	appG := app.Gin{C: c}
 	name := c.Query("name")
-
-	maps := make(map[string]interface{})
-	data := make(map[string]interface{})
-
-	if name != "" {
-		maps["name"] = name
-	}
-
-	var state = -1
+	state := -1
 	if arg := c.Query("state"); arg != "" {
 		state = com.StrTo(arg).MustInt()
-		maps["state"] = state
 	}
-	code := e.SUCCESS
-	data["lists"] = models.GetTags(util.GetPage(c), setting.PageSize, maps)
-	data["total"] = models.GetTagTotal(maps)
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": code,
-		"msg":  e.GetMsg(code),
-		"data": data,
+	tagService := tag_service.Tag{
+		Name:     name,
+		State:    state,
+		PageSize: setting.PageSize,
+		PageNum:  util.GetPage(c),
+	}
+	tags, err := tagService.GetAll()
+	if err != nil {
+		appG.Response(http.StatusInternalServerError, e.ERROR_GET_TAGS_FAIL, nil)
+		return
+	}
+
+	count, err := tagService.Count()
+	if err != nil {
+		appG.Response(http.StatusInternalServerError, e.ERROR_COUNT_TAG_FAIL, nil)
+		return
+	}
+
+	appG.Response(http.StatusOK, e.SUCCESS, map[string]interface{}{
+		"lists": tags,
+		"total": count,
 	})
+}
+
+type AddTagForm struct {
+	Name      string `form:"name" valid:"Required;MaxSize(100)"`
+	CreatedBy string `form:"created_by" valid:"Required;MaxSize(100)"`
+	State     int    `form:"state" valid:"Range(0,1)"`
 }
 
 // @Summary Add Tag
@@ -57,39 +68,44 @@ func GetTags(c *gin.Context) {
 // @Failure 200 {string} json "{"code":10001,"data":{},"msg":"ok"}"
 // @Router /api/v1/tags [post]
 func AddTag(c *gin.Context) {
-	name := c.Query("name")
-	state := com.StrTo(c.DefaultQuery("state", "0")).MustInt()
-	createdBy := c.Query("created_by")
-
-	valid := validation.Validation{}
-	valid.Required(name, "name").Message("name can not be empty")
-	valid.MaxSize(name, 100, "name").Message("name's length can not over 100")
-	valid.Required(createdBy, "created_by").Message("created_by can not be empty")
-	valid.MaxSize(createdBy, 100, "created_by").Message("created_by's length can not over 100")
-	valid.Range(state, 0, 1, "state").Message("state only can be 0 or 1")
-
-	code := e.INVALID_PARAMS
-	if !valid.HasErrors() {
-		if !models.ExistTagByName(name) {
-			if models.AddTag(name, state, createdBy) {
-				code = e.SUCCESS
-			} else {
-				code = e.ERROR
-			}
-		} else {
-			code = e.ERROR_EXIST_TAG
-		}
-	} else {
-		for _, err := range valid.Errors {
-			logging.Info(err.Key, err.Message)
-		}
+	var (
+		appG = app.Gin{C: c}
+		form AddTagForm
+	)
+	httpCode, errCode := app.BindAndValid(c, &form)
+	if errCode != e.SUCCESS {
+		appG.Response(httpCode, e.ERROR_ADD_TAG_FAIL, nil)
+		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": code,
-		"msg":  e.GetMsg(code),
-		"data": make(map[string]string),
-	})
+	tagService := tag_service.Tag{
+		Name:      form.Name,
+		CreatedBy: form.CreatedBy,
+		State:     form.State,
+	}
+	exist, err := tagService.ExistByName()
+	if err != nil {
+		appG.Response(http.StatusInternalServerError, e.ERROR_EXIST_TAG_FAIL, nil)
+		return
+	}
+	if exist {
+		appG.Response(http.StatusBadRequest, e.ERROR_EXIST_TAG, nil)
+		return
+	}
+	err = tagService.Add()
+	if err != nil {
+		appG.Response(http.StatusInternalServerError, e.ERROR_ADD_TAG_FAIL, nil)
+		return
+	}
+
+	appG.Response(http.StatusOK, e.SUCCESS, nil)
+}
+
+type EditTagForm struct {
+	ID         int    `form:"id" valid:"Required;Min(1)"`
+	Name       string `form:"name" valid:"Required;MaxSize(100)"`
+	ModifiedBy string `form:"modified_by" valid:"Required;MaxSize(100)"`
+	State      int    `form:"state" valid:"Range(0,1)"`
 }
 
 // @Summary Edit Tag
@@ -104,52 +120,49 @@ func AddTag(c *gin.Context) {
 // @Failure 200 {string} json "{"code":10001,"data":{},"msg":"ok"}"
 // @Router /api/v1/tag/{id} [put]
 func EditTag(c *gin.Context) {
-	id := com.StrTo(c.Param("id")).MustInt()
-	name := c.Query("name")
-	modifiedBy := c.Query("modified_by")
-
-	valid := validation.Validation{}
-
-	state := -1
-	if arg := c.Query("state"); arg != "" {
-		state = com.StrTo(arg).MustInt()
-		valid.Range(state, 0, 1, "state").Message("state only can be 0 or 1")
+	var (
+		appG = app.Gin{C: c}
+		form = EditTagForm{ID: com.StrTo(c.Param("id")).MustInt()}
+	)
+	httpCode, errCode := app.BindAndValid(c, &form)
+	if errCode != e.SUCCESS {
+		appG.Response(httpCode, errCode, nil)
+		return
+	}
+	tagService := tag_service.Tag{
+		ID:         form.ID,
+		Name:       form.Name,
+		State:      form.State,
+		ModifiedBy: form.ModifiedBy,
 	}
 
-	valid.Required(id, "id").Message("id can not be empty")
-	valid.Required(modifiedBy, "modified_by").Message("modified_by name can not be empty")
-	valid.MaxSize(modifiedBy, 100, "modifiedBy").Message("modifiedBy's length can not over 100")
-	valid.MaxSize(name, 100, "name").Message("name's length can not over 100")
-
-	code := e.INVALID_PARAMS
-	fmt.Println(valid.Errors)
-	if !valid.HasErrors() {
-		if models.ExistTagByID(id) {
-			data := make(map[string]interface{})
-			data["modified_by"] = modifiedBy
-			if name != "" {
-				data["name"] = name
-			}
-			if state != -1 {
-				data["state"] = state
-			}
-			if models.EditTag(id, data) {
-				code = e.SUCCESS
-			}
-		} else {
-			code = e.ERROR_NOT_EXIST_TAG
-		}
-	} else {
-		for _, err := range valid.Errors {
-			logging.Info(err.Key, err.Message)
-		}
+	exist, err := tagService.ExistByID()
+	if err != nil {
+		appG.Response(http.StatusInternalServerError, e.ERROR_EXIST_TAG_FAIL, nil)
+		return
+	}
+	if !exist {
+		appG.Response(http.StatusOK, e.ERROR_NOT_EXIST_TAG, nil)
+		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": code,
-		"msg":  e.GetMsg(code),
-		"data": make(map[string]string),
-	})
+	exist, err = tagService.ExistByName()
+	if err != nil {
+		appG.Response(http.StatusInternalServerError, e.ERROR_EXIST_TAG_FAIL, nil)
+		return
+	}
+	if exist {
+		appG.Response(http.StatusBadRequest, e.ERROR_EXIST_TAG, nil)
+		return
+	}
+
+	err = tagService.Edit()
+	if err != nil {
+		appG.Response(http.StatusInternalServerError, e.ERROR_EDIT_TAG_FAIL, nil)
+		return
+	}
+
+	appG.Response(http.StatusOK, e.SUCCESS, nil)
 }
 
 // @Summary Delete Tag
@@ -161,30 +174,33 @@ func EditTag(c *gin.Context) {
 // @Failure 200 {string} json "{"code":10002,"data":{},"msg":"ok"}"
 // @Router /api/v1/tag/{id} [delete]
 func DeleteTag(c *gin.Context) {
-	id := com.StrTo(c.Param("id")).MustInt()
-
+	appG := app.Gin{C: c}
 	valid := validation.Validation{}
+	id := com.StrTo(c.Param("id")).MustInt()
 	valid.Required(id, "id").Message("id can not be empty")
 	valid.Min(id, 1, "id").Message("id must great than 0")
 
-	code := e.INVALID_PARAMS
-	if !valid.HasErrors() {
-		if !models.ExistTagByID(id) {
-			code = e.ERROR_NOT_EXIST_TAG
-		} else {
-			if models.DeleteTag(id) {
-				code = e.SUCCESS
-			}
-		}
-	} else {
-		for _, err := range valid.Errors {
-			logging.Info(err.Key, err.Message)
-		}
+	if valid.HasErrors() {
+		app.MarkErrors(valid.Errors)
+		appG.Response(http.StatusBadRequest, e.INVALID_PARAMS, nil)
+		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": code,
-		"msg":  e.GetMsg(code),
-		"data": make(map[string]string),
-	})
+	tagService := tag_service.Tag{ID: id}
+	exist, err := tagService.ExistByID()
+	if err != nil {
+		appG.Response(http.StatusInternalServerError, e.ERROR_EXIST_TAG_FAIL, nil)
+		return
+	}
+	if !exist {
+		appG.Response(http.StatusOK, e.ERROR_NOT_EXIST_TAG, nil)
+		return
+	}
+	err = tagService.Delete()
+	if err != nil {
+		appG.Response(http.StatusInternalServerError, e.ERROR_DELETE_TAG_FAIL, nil)
+		return
+	}
+
+	appG.Response(http.StatusOK, e.SUCCESS, nil)
 }

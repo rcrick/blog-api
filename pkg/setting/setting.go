@@ -1,54 +1,85 @@
 package setting
 
 import (
+	"fmt"
 	"github.com/go-ini/ini"
 	"log"
 	"time"
 )
 
-var (
-	Cfg *ini.File
+type App struct {
+	JwtSecret       string
+	PageSize        int
+	RuntimeRootPath string
 
-	RunMode string
+	ImagePrefixUrl string
+	ImageSavePath  string
+	ImageMaxSize   int
+	ImageAllowExts []string
 
-	HTTPPort     int
+	LogSavePath string
+	LogSaveName string
+	LogFileExt  string
+	TimeFormat  string
+}
+
+type ServerCfg struct {
+	RunMode      string
+	HttpPort     int
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
+}
+
+type Database struct {
+	Type        string
+	User        string
+	Password    string
+	Host        string
+	Name        string
+	TablePrefix string
+}
+
+type Redis struct {
+	Host        string
+	Password    string
+	MaxIdle     int
+	MaxActive   int
+	IdleTimeout time.Duration
+}
+
+var (
+	Cfg *ini.File
 
 	PageSize  int
 	JwtSecret string
 )
 
-func init() {
+var AppSetting = &App{}
+var ServerSetting = &ServerCfg{}
+var DatabaseSetting = &Database{}
+var RedisSetting = &Redis{}
+
+func SetUp() {
+	fmt.Println("====")
 	var err error
 	Cfg, err = ini.Load("conf/app.ini")
 	if err != nil {
 		log.Fatalf("Failed to parse 'conf/app.ini :%v", err)
 	}
-	loadBase()
-	loadServer()
-	loadApp()
+	mapTo("app", AppSetting)
+	mapTo("server", ServerSetting)
+	mapTo("database", DatabaseSetting)
+	mapTo("redis", RedisSetting)
+
+	AppSetting.ImageMaxSize = AppSetting.ImageMaxSize * 1024 * 1024
+	ServerSetting.ReadTimeout = ServerSetting.ReadTimeout * time.Second
+	ServerSetting.WriteTimeout = ServerSetting.WriteTimeout * time.Second
+	RedisSetting.IdleTimeout = RedisSetting.IdleTimeout * time.Second
 }
 
-func loadBase() {
-	RunMode = Cfg.Section("").Key("RUN_MODE").MustString("debug")
-}
-
-func loadServer() {
-	sec, err := Cfg.GetSection("server")
+func mapTo(section string, v interface{}) {
+	err := Cfg.Section(section).MapTo(v)
 	if err != nil {
-		log.Fatalf("Failed to parse section 'server': %v", err)
+		log.Fatalf("Cfg.MapTo %s err: %v", section, err)
 	}
-	HTTPPort = sec.Key("HTTP_PORT").MustInt(8000)
-	ReadTimeout = time.Duration(sec.Key("READ_TIMEOUT").MustInt(60)) * time.Second
-	WriteTimeout = time.Duration(sec.Key("WRITE_TIMEOUT").MustInt(60)) * time.Second
-}
-
-func loadApp() {
-	sec, err := Cfg.GetSection("app")
-	if err != nil {
-		log.Fatalf("Failed to parse section 'app': %v", err)
-	}
-	PageSize = sec.Key("PAGE_SIZE").MustInt(10)
-	JwtSecret = sec.Key("JWT_SECRET").MustString("23347$040412")
 }
